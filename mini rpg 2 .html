@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mini RPG Adventure</title>
+<link rel="manifest" href="manifest.json">
+<style>
+body { font-family: Arial, sans-serif; background: #1e1e2f; color: #fff; text-align: center; margin:0; padding:10px;}
+h1 { font-size: 24px; }
+button { padding: 12px; margin: 5px; font-size:16px; border:none; border-radius:8px; background:#444; color:#fff; }
+button:hover{ background:#666; cursor:pointer; }
+.log { background: #222; padding:10px; height:200px; overflow-y:auto; margin-top:10px; text-align:left; border-radius:8px;}
+.enemy { color:#ff6b6b; font-weight:bold; }
+.crit { color:#ffd700; font-weight:bold; }
+.heal { color:#ff7fff; }
+.gold { color:#ffd700; }
+.quest { color:#00ffff; font-weight:bold; }
+#ui { display:flex; flex-direction: column; align-items: center; }
+.status { margin:5px; font-size:14px; }
+.shop-buttons button { margin:5px; }
+</style>
+</head>
+<body>
+
+<h1>Mini RPG Adventure</h1>
+<div id="class-select">
+<p>Choose your class:</p>
+<button onclick="chooseClass('Warrior')">Warrior</button>
+<button onclick="chooseClass('Archer')">Archer</button>
+<button onclick="chooseClass('Mage')">Mage</button>
+</div>
+
+<div id="ui">
+<div class="status">
+HP: <span id="hp"></span>/<span id="maxHp"></span> | Level: <span id="lvl"></span> | XP: <span id="xp"></span>
+</div>
+<div class="status">
+Weapon: <span id="weapon"></span> | Armor: <span id="armor"></span> | Gold: <span id="gold"></span>
+</div>
+<div class="status">
+Inventory: <span id="inv"></span>
+</div>
+<div class="status">
+Current Quest: <span id="quest"></span>
+</div>
+
+<div>
+<button onclick="explore()">Explore</button>
+<button onclick="attack()">Attack</button>
+<button onclick="useAbilityPrompt()">Use Ability</button>
+<button onclick="useItem()">Use Item</button>
+<button onclick="showShop()">Shop 🛒</button>
+<button onclick="showWeapons()">Switch Weapon 🔀</button>
+</div>
+</div>
+
+<div class="log" id="log"></div>
+
+<!-- AUDIO -->
+<audio id="bgm" src="bgm.mp3" loop></audio>
+<audio id="attackSound" src="attack.mp3"></audio>
+<audio id="abilitySound" src="ability.mp3"></audio>
+<audio id="healSound" src="heal.mp3"></audio>
+<audio id="lootSound" src="loot.mp3"></audio>
+
+<script>
+// ---------- PLAYER ----------
+let player = {
+  class:null, hp:100, maxHp:100, level:1, xp:0, gold:0,
+  weapon:{name:"Fists", damage:5, rarity:"Common"},
+  armor:{name:"Cloth", defense:5}, inventory:["Potion"], weaponsInventory:[],
+  quest:null, effects:{}
+};
+
+// ---------- CLASSES ----------
+const classes = {
+  Warrior:{hp:120,maxHp:120,weapon:{name:"Sword",damage:10,rarity:"Common"},armor:{name:"Cloth",defense:5}},
+  Archer:{hp:90,maxHp:90,weapon:{name:"Bow",damage:12,rarity:"Common"},armor:{name:"Cloth",defense:5}},
+  Mage:{hp:80,maxHp:80,weapon:{name:"Magic Staff",damage:15,rarity:"Common"},armor:{name:"Cloth",defense:5}}
+};
+
+// ---------- ABILITIES ----------
+const classAbilities = {
+  Warrior:[
+    {name:"Sword Bash", damage:15, effect:"stun", duration:2, unlockLevel:3},
+    {name:"Ultimate Strike", damage:30, effect:"ignoreBlock", duration:1, unlockLevel:7}
+  ],
+  Archer:[
+    {name:"Pierced Arrow", damage:10, effect:"critBoost", duration:2, unlockLevel:3},
+    {name:"Multi Shot", damage:40, effect:"ignoreBlock", duration:1, unlockLevel:8}
+  ],
+  Mage:[
+    {name:"Water Ball", damage:15, effect:"weaken", duration:2, unlockLevel:3},
+    {name:"Dark Spell", damage:50, hpCost:20, effect:"blind", duration:3, unlockLevel:10},
+    {name:"Fire Ball", damage:20, effect:"burn", duration:2, unlockLevel:7}
+  ]
+};
+
+// ---------- ENEMIES ----------
+let enemy=null;
+const enemyTypes=[
+  {name:"Poison Skeleton", hp:55, attack:15, ability:{name:"Poison Arrow", effect:"poison", duration:2}, xp:20, gold:10, spawnRate:0.7},
+  {name:"Knight Goblin", hp:60, attack:20, ability:{name:"Sword Strike", effect:null}, xp:15, gold:5, spawnRate:0.6},
+  {name:"King Orc", hp:300, attack:45, ability:{name:"Greed Attack", effect:"increaseAttack"}, xp:100, gold:100, spawnRate:0.1, levelRequirement:7}
+];
+
+// ---------- WEAPONS & ARMOR ----------
+const weapons=[
+  {name:"Sword",damage:10,rarity:"Common"},
+  {name:"Axe",damage:15,rarity:"Rare"},
+  {name:"Magic Staff",damage:20,rarity:"Epic"}
+];
+const armors=[
+  {name:"Cloth",defense:0,price:0},
+  {name:"Leather",defense:7,price:50},
+  {name:"Chainmail",defense:15,price:100}
+];
+
+// ---------- QUESTS ----------
+const quests=[
+  {desc:"Defeat 3 Knight Goblins", target:"Knight Goblin", count:3, rewardXP:50, rewardGold:20},
+  {desc:"Defeat 2 Poison Skeletons", target:"Poison Skeleton", count:2, rewardXP:40, rewardGold:15},
+  {desc:"Defeat the King Orc", target:"King Orc", count:1, rewardXP:150, rewardGold:100}
+];
+
+// ---------- LOG ----------
+function log(msg){ let l=document.getElementById("log"); l.innerHTML+=msg+"<br>"; l.scrollTop=l.scrollHeight; }
+
+// ---------- UPDATE UI ----------
+function update(){
+  document.getElementById("hp").textContent=player.hp;
+  document.getElementById("maxHp").textContent=player.maxHp;
+  document.getElementById("lvl").textContent=player.level;
+  document.getElementById("xp").textContent=player.xp;
+  document.getElementById("weapon").textContent=player.weapon.name+" ("+player.weapon.rarity+")";
+  document.getElementById("armor").textContent=player.armor.name+" (Def:"+player.armor.defense+")";
+  document.getElementById("gold").textContent=player.gold;
+  document.getElementById("inv").textContent=player.inventory.join(", ")||"Empty";
+  document.getElementById("quest").textContent=player.quest?player.quest.desc+" ("+player.quest.progress+"/"+player.quest.count+")":"None";
+}
+
+// ---------- LEVEL & XP ----------
+function xpNeeded(level){ return 100 + (level-1)*100; }
+function checkLevelUp(){
+  while(player.xp>=xpNeeded(player.level)){
+    player.xp-=xpNeeded(player.level);
+    player.level++;
+    player.maxHp+=20; player.hp=player.maxHp;
+    log("🎉 LEVEL UP! Now level "+player.level);
+  }
+}
+
+// ---------- CHOOSE CLASS ----------
+function chooseClass(className){
+  const c=classes[className];
+  player.class=className;
+  player.hp=c.hp; player.maxHp=c.maxHp;
+  player.weapon={...c.weapon}; player.armor={...c.armor};
+  player.weaponsInventory=[player.weapon];
+  document.getElementById("class-select").style.display="none";
+  log("🛡️ You chose the "+className+" class!");
+  update();
+}
+
+// ---------- EXPLORE ----------
+function explore(){
+  if(enemy){ log("⚠️ Enemy already here!"); return; }
+
+  if(Math.random()<0.2){ spawnQuestGiver(); return; }
+
+  const possible=enemyTypes.filter(e=>!e.levelRequirement||player.level>=e.levelRequirement)
+                           .filter(e=>Math.random()<e.spawnRate);
+  if(possible.length===0){ log("🌿 Nothing found while exploring..."); return; }
+
+  const chosen={...possible[Math.floor(Math.random()*possible.length)], currentHp:possible[Math.floor(Math.random()*possible.length)].hp, effects:{}};
+  enemy=chosen;
+  log("⚔️ A <span class='enemy'>"+enemy.name+"</span> appears!");
+  update();
+}
+
+// ---------- QUEST ----------
+function spawnQuestGiver(){
+  if(player.quest){ log("🧙 Quest giver appears but you already have a quest."); return; }
+  const q={...quests[Math.floor(Math.random()*quests.length)], progress:0};
+  player.quest=q;
+  log("🧙 Quest Accepted: "+q.desc);
+  update();
+}
+
+// ---------- ATTACK ----------
+function attack(){
+  if(!enemy){ log("No enemy!"); return; }
+  playSound("attackSound");
+
+  if(Math.random()<0.1){ log("⚠️ You missed "+enemy.name+"!"); enemyAttack(); return; }
+
+  let crit=Math.random()<0.2||(player.effects.critBoost>0);
+  let dmg=player.weapon.damage+Math.floor(Math.random()*5);
+  if(crit) dmg*=2;
+  enemy.currentHp-=dmg;
+
+  log("You hit <span class='enemy'>"+enemy.name+"</span> for "+dmg+(crit?" 💥CRIT!":""));
+
+  if(enemy.currentHp<=0){
+    log("✅ Defeated "+enemy.name+"!");
+    player.xp+=enemy.xp; player.gold+=enemy.gold; playLootSound();
+    checkLevelUp();
+    checkQuestProgress(enemy.name);
+    enemy=null; update(); return;
+  }
+
+  enemyAttack(); update();
+}
+
+// ---------- ENEMY ATTACK ----------
+function enemyAttack(){
+  if(!enemy) return;
+  if(enemy.effects.stun>0){ log(enemy.name+" is stunned!"); return; }
+
+  let dmg=Math.max(0, Math.floor(Math.random()*enemy.attack)-player.armor.defense);
+
+  if(enemy.ability){
+    switch(enemy.ability.effect){
+      case "poison": if(Math.random()<0.5) player.effects.poison=2; break;
+      case "stun": if(Math.random()<0.5) player.effects.stun=2; break;
+      case "increaseAttack": enemy.attack+=2; break;
+    }
+  }
+
+  player.hp-=dmg;
+  log(enemy.name+" hits you for "+dmg);
+}
+
+// ---------- USE ITEM ----------
+function useItem(){
+  let i=player.inventory.indexOf("Potion");
+  if(i!==-1){ player.inventory.splice(i,1); player.hp+=30; if(player.hp>player.maxHp) player.hp=player.maxHp; log("❤️ Healed 30 HP!"); playSound("healSound"); }
+  else log("No potions!");
+  update();
+}
+
+// ---------- ABILITIES ----------
+function useAbilityPrompt(){
+  const abilities=classAbilities[player.class].filter(a=>player.level>=a.unlockLevel);
+  if(abilities.length===0){ log("⚠️ No abilities unlocked!"); return; }
+  let names=abilities.map((a,i)=>i+") "+a.name).join("\n");
+  let choice=parseInt(prompt("Choose ability:\n"+names));
+  if(isNaN(choice)||!abilities[choice]){ log("Invalid choice!"); return; }
+  useAbility(choice);
+}
+function useAbility(slot){
+  if(!enemy){ log("No enemy!"); return; }
+  const ability=classAbilities[player.class][slot];
+  if(ability.hpCost && player.hp<=ability.hpCost){ log("⚠️ Not enough HP!"); return; }
+  if(ability.hpCost) player.hp-=ability.hpCost;
+  playSound("abilitySound");
+
+  let dmg=ability.damage+Math.floor(Math.random()*5);
+  if(ability.effect){
+    if(ability.effect==="stun") enemy.effects.stun=ability.duration;
+    if(ability.effect==="ignoreBlock") enemy.effects.ignoreBlock=ability.duration||1;
+    if(ability.effect==="critBoost") player.effects.critBoost=ability.duration;
+    if(ability.effect==="weaken") enemy.effects.weaken=ability.duration;
+    if(ability.effect==="blind") enemy.effects.blind=ability.duration;
+  }
+  enemy.currentHp-=dmg;
+  log(player.class+" uses "+ability.name+" for "+dmg+" damage!");
+
+  if(enemy.currentHp<=0){
+    log("✅ Defeated "+enemy.name+"!"); player.xp+=enemy.xp; player.gold+=enemy.gold; playLootSound();
+    checkQuestProgress(enemy.name); enemy=null; update(); checkLevelUp(); return;
+  }
+
+  enemyAttack(); update();
+}
+
+// ---------- QUEST PROGRESS ----------
+function checkQuestProgress(target){
+  if(!player.quest) return;
+  if(target.includes(player.quest.target)){
+    player.quest.progress++;
+    log("✅ Quest Progress: "+player.quest.progress+"/"+player.quest.count);
+    if(player.quest.progress>=player.quest.count){
+      log("🎉 Quest Complete! You gained "+player.quest.rewardXP+" XP and "+player.quest.rewardGold+" gold");
+      player.xp+=player.quest.rewardXP; player.gold+=player.quest.rewardGold;
+      playLootSound();
+      player.quest=null;
+      checkLevelUp();
+    }
+    update();
+  }
+}
+
+// ---------- SHOP ----------
+function showShop(){
+  const logDiv=document.getElementById("log");
+  logDiv.innerHTML+=`<div class='shop-buttons'>🛒 Shop:<br>
+    <button onclick="buy('Potion')">Potion 20</button>
+    <button onclick="buy('Leather')">Leather Armor 50</button>
+    <button onclick="buy('Chainmail')">Chainmail 100</button>
+  </div><br>`;
+}
+function buy(item){
+  if(item==="Potion"&&player.gold>=20){ player.inventory.push("Potion"); player.gold-=20; log("🧪 Bought potion!"); playLootSound();}
+  else if(item==="Leather"&&player.gold>=50){ player.armor=armors[1]; player.gold-=50; log("🛡️ Bought Leather Armor!"); playLootSound();}
+  else if(item==="Chainmail"&&player.gold>=100){ player.armor=armors[2]; player.gold-=100; log("🛡️ Bought Chainmail Armor!"); playLootSound();}
+  else log("❌ Not enough gold!");
+  update();
+}
+
+// ---------- SWITCH WEAPON ----------
+function showWeapons(){ 
+  const logDiv=document.getElementById("log");
+  logDiv.innerHTML+=`<div class='shop-buttons'>Switch Weapon:<br>`; 
+  player.weaponsInventory.forEach((w,i)=>{logDiv.innerHTML+=`<button onclick="switchWeapon(${i})">${w.rarity} ${w.name}</button>`});
+  logDiv.innerHTML+=`</div><br>`;
+}
+function switchWeapon(index){ player.weapon=player.weaponsInventory[index]; log("🗡️ Switched to "+player.weapon.rarity+" "+player.weapon.name); update();}
+
+// ---------- EFFECTS ----------
+function updateEffects(){
+  for(let e in player.effects) if(player.effects[e]>0) player.effects[e]--;
+  if(enemy) for(let e in enemy.effects) if(enemy.effects[e]>0) enemy.effects[e]--;
+}
+
+// ---------- AUDIO ----------
+const bgm=document.getElementById("bgm");
+document.body.addEventListener("click",()=>{ if(bgm.paused){ bgm.play(); console.log("🎵 Music started"); }},{once:true});
+function playSound(id){ const a=document.getElementById(id); if(a){ a.currentTime=0; a.play(); } }
+function playLootSound(){ playSound("lootSound"); }
+
+update();
+</script>
+</body>
+</html>
